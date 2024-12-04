@@ -1,79 +1,153 @@
 import cv2
-import mediapipe as mp
 import numpy as np
-from math import hypot
+import time
+from keys import *
+from handTracker import *
+from pynput.keyboard import Controller
 
-# Initialize MediaPipe Hands
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
-mp_draw = mp.solutions.drawing_utils
+def getMousPos(event , x, y, flags, param):
+    global clickedX, clickedY
+    global mouseX, mouseY
+    if event == cv2.EVENT_LBUTTONUP:
+        #print(x,y)
+        clickedX, clickedY = x, y
+    if event == cv2.EVENT_MOUSEMOVE:
+    #     print(x,y)0
+        mouseX, mouseY = x, y
 
-# Initialize the camera
+def calculateIntDidtance(pt1, pt2):
+    return int(((pt1[0]-pt2[0])**2 + (pt1[1]-pt2[1])**2)**0.5)
+
+# Creating keys
+w,h = 80, 60
+startX, startY = 40, 200
+keys=[]
+letters =list("QWERTYUIOPASDFGHJKLZXCVBNM")
+for i,l in enumerate(letters):
+    if i<10:
+        keys.append(Key(startX + i*w + i*5, startY, w, h, l))
+    elif i<19:
+        keys.append(Key(startX + (i-10)*w + i*5, startY + h + 5,w,h,l))
+    else:
+        keys.append(Key(startX + (i-19)*w + i*5, startY + 2*h + 10, w, h, l))
+
+keys.append(Key(startX+25, startY+3*h+15, 5*w, h, "Space"))
+keys.append(Key(startX+8*w + 50, startY+2*h+10, w, h, "clr"))
+keys.append(Key(startX+5*w+30, startY+3*h+15, 5*w, h, "<--"))
+
+showKey = Key(300,5,80,50, 'Show')
+exitKey = Key(300,65,80,50, 'Exit')
+textBox = Key(startX, startY-h-5, 10*w+9*5, h,'')
+
 cap = cv2.VideoCapture(0)
+ptime = 0
 
-# Keyboard settings
-keys = [['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-        ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';'],
-        ['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', '/']]
+# initiating the hand tracker
+tracker = HandTracker(detectionCon=int(0.8))  # This may not work if 0.8 is a valid float.
 
-# Variables
-text = ""
-keyboard_width = 1000
-keyboard_height = 300
-key_width = keyboard_width // 10
-key_height = keyboard_height // 3
+# getting frame's height and width
+frameHeight, frameWidth, _ = cap.read()[1].shape
+showKey.x = int(frameWidth*1.5) - 85
+exitKey.x = int(frameWidth*1.5) - 85
+#print(showKey.x)
 
+clickedX, clickedY = 0, 0
+mousX, mousY = 0, 0
 
-def draw_keyboard(img, alpha=0.3):
-    overlay = img.copy()
-    for i in range(3):
-        for j, key in enumerate(keys[i]):
-            x1, y1 = j * key_width, i * key_height
-            x2, y2 = x1 + key_width, y1 + key_height
-            cv2.rectangle(overlay, (x1, y1), (x2, y2), (255, 255, 255), -1)
-            cv2.putText(overlay, key, (x1 + 20, y1 + 60), cv2.FONT_HERSHEY_PLAIN, 2, (0, 0, 0), 2)
+show = False
+cv2.namedWindow('video')
+counter = 0
+previousClick = 0
 
-    cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
-    return img
-
-
-def get_clicked_key(x, y):
-    row = y // key_height
-    col = x // key_width
-    if 0 <= row < 3 and 0 <= col < 10:
-        return keys[row][col]
-    return None
-
-
+keyboard = Controller()
 while True:
-    success, img = cap.read()
-    img = cv2.flip(img, 1)
-    img = cv2.resize(img, (keyboard_width, keyboard_height))
-    rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    results = hands.process(rgb_img)
+    if counter >0:
+        counter -=1
 
-    img = draw_keyboard(img)
+    signTipX = 0
+    signTipY = 0
 
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            mp_draw.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+    thumbTipX = 0
+    thumbTipY = 0
 
-            index_finger_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-            x, y = int(index_finger_tip.x * keyboard_width), int(index_finger_tip.y * keyboard_height)
+    ret, frame = cap.read()
+    if not ret:
+        break
+    frame = cv2.resize(frame,(int(frameWidth*1.5), int(frameHeight*1.5)))
+    frame = cv2.flip(frame, 1)
+    #find hands
+    frame = tracker.findHands(frame)
+    lmList = tracker.getPostion(frame, draw=False)
+    if lmList:
+        signTipX, signTipY = lmList[8][1], lmList[8][2]
+        thumbTipX, thumbTipY = lmList[4][1], lmList[4][2]
+        if calculateIntDidtance((signTipX, signTipY), (thumbTipX, thumbTipY)) <50:
+            centerX = int((signTipX+thumbTipX)/2)
+            centerY = int((signTipY + thumbTipY)/2)
+            cv2.line(frame, (signTipX, signTipY), (thumbTipX, thumbTipY), (0,255,0),2)
+            cv2.circle(frame, (centerX, centerY), 5, (0,255,0), cv2.FILLED)
 
-            cv2.circle(img, (x, y), 10, (0, 255, 0), -1)
+    ctime = time.time()
+    fps = int(1/(ctime-ptime))
 
-            clicked_key = get_clicked_key(x, y)
-            if clicked_key:
-                text += clicked_key
-                print(f"Clicked: {clicked_key}")
-                # Add a small delay to avoid multiple clicks
-                cv2.waitKey(300)
+    cv2.putText(frame,str(fps) + " FPS", (10,20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,0),2)
+    showKey.drawKey(frame,(255,255,255), (0,0,0),0.1, fontScale=0.5)
+    exitKey.drawKey(frame,(255,255,255), (0,0,0),0.1, fontScale=0.5)
+    cv2.setMouseCallback('video', getMousPos)
 
-    cv2.putText(img, text, (10, keyboard_height + 30), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255), 2)
-    cv2.imshow("Virtual Keyboard", img)
+    if showKey.isOver(clickedX, clickedY):
+        show = not show
+        showKey.text = "Hide" if show else "Show"
+        clickedX, clickedY = 0, 0
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    if exitKey.isOver(clickedX, clickedY):
+        #break
+        exit()
+
+    #checking if sign finger is over a key and if click happens
+    alpha = 0.5
+    if show:
+        textBox.drawKey(frame, (255,255,255), (0,0,0), 0.3)
+        for k in keys:
+            if k.isOver(mouseX, mouseY) or k.isOver(signTipX, signTipY):
+                alpha = 0.1
+                # writing using mouse right click
+                if k.isOver(clickedX, clickedY):
+                    if k.text == '<--':
+                        textBox.text = textBox.text[:-1]
+                    elif k.text == 'clr':
+                        textBox.text = ''
+                    elif len(textBox.text) < 30:
+                        if k.text == 'Space':
+                            textBox.text += " "
+                        else:
+                            textBox.text += k.text
+
+                # writing using fingers
+                if (k.isOver(thumbTipX, thumbTipY)):
+                    clickTime = time.time()
+                    if clickTime - previousClick > 0.4:
+                        if k.text == '<--':
+                            textBox.text = textBox.text[:-1]
+                        elif k.text == 'clr':
+                            textBox.text = ''
+                        elif len(textBox.text) < 30:
+                            if k.text == 'Space':
+                                textBox.text += " "
+                            else:
+                                textBox.text += k.text
+                                #simulating the press of actuall keyboard
+                                keyboard.press(k.text)
+                        previousClick = clickTime
+            k.drawKey(frame,(255,255,255), (0,0,0), alpha=alpha)
+            alpha = 0.5
+        clickedX, clickedY = 0, 0
+    ptime = ctime
+    cv2.imshow('video', frame)
+
+    ## stop the video when 'q' is pressed
+    pressedKey = cv2.waitKey(1)
+    if pressedKey == ord('q'):
         break
 
 cap.release()
